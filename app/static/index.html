@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ZenFriend</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: white;
+      text-align: center;
+      padding: 2rem;
+    }
+
+    #siri-ball {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      margin: 2rem auto;
+      background: radial-gradient(circle at center, #5cf, #19f);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 0.9; }
+      50% { transform: scale(1.15); opacity: 1; }
+      100% { transform: scale(1); opacity: 0.9; }
+    }
+
+    #subtitle {
+      font-size: 1.4rem;
+      margin-top: 2rem;
+      min-height: 3rem;
+    }
+
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 1rem;
+      background: #19f;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #37f;
+    }
+  </style>
+</head>
+<body>
+  <h1>ZenFriend</h1>
+  <div id="siri-ball"></div>
+  <div id="subtitle">Click below to start a conversation.</div>
+  <button onclick="startConversation()">Start Conversation</button>
+  <button onclick="endConversation()">End Chat</button>
+
+  <script>
+    let mediaRecorder;
+    let chunks = [];
+    let username = "";
+    let silenceTimeout;
+
+    async function speak(text, onEnd) {
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.onend = () => onEnd && onEnd();
+      subtitle.innerText = text;
+      speechSynthesis.speak(utter);
+    }
+
+    function promptForUserName() {
+      const subtitleDiv = document.getElementById("subtitle");
+      subtitleDiv.innerText = "What should I call you?";
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "Enter your name...";
+      input.style.marginTop = "10px";
+      input.style.padding = "8px";
+      input.style.fontSize = "16px";
+      input.id = "usernameInput";
+
+      const button = document.createElement("button");
+      button.innerText = "Confirm";
+      button.style.marginLeft = "10px";
+      button.onclick = () => {
+        const name = input.value.trim();
+        if (name) {
+          username = name;
+          subtitleDiv.innerText = `Nice to meet you, ${name}! You can start talking now.`;
+          input.remove();
+          button.remove();
+          setTimeout(() => {
+            listenUser();
+          }, 1000);
+        }
+      };
+
+      subtitleDiv.appendChild(document.createElement("br"));
+      subtitleDiv.appendChild(input);
+      subtitleDiv.appendChild(button);
+    }
+
+    function startConversation() {
+      fetch("/update_character", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Zen", personality: "Calm" }),
+      });
+
+      speak("Hi! I'm Zen. I'm always here when you need someone to talk to.", () => {
+        promptForUserName();
+      });
+    }
+
+    function endConversation() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+      }
+      subtitle.innerText = "Chat ended. See you next time!";
+    }
+
+    async function listenUser() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      chunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "audio/wav" });
+        const formData = new FormData();
+        formData.append("file", blob, "recording.wav");
+
+        fetch("/upload_audio", {
+          method: "POST",
+          body: formData,
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            subtitle.innerText = `${username || "You"}: ${data.user}`;
+            setTimeout(() => {
+              speak(data.reply, () => {
+                subtitle.innerText = `Zen: ${data.reply}`;
+                resetSilenceTimer();  // continue listening
+              });
+            }, 1000);
+          });
+      };
+
+      mediaRecorder.start();
+      resetSilenceTimer();
+    }
+
+    function resetSilenceTimer() {
+      if (silenceTimeout) clearTimeout(silenceTimeout);
+      silenceTimeout = setTimeout(() => {
+        endConversation();
+      }, 10000); // End chat after 10s of silence
+      listenUser(); // Continue listening
+    }
+  </script>
+</body>
+</html>
